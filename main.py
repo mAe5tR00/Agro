@@ -6,7 +6,6 @@ import os
 from keep_alive import keep_alive
 keep_alive()
 
-
 # Ваш токен бота и ID чата
 TOKEN = '6600994228:AAEKvdJCVZPCBXkP3ylfFW9jHqS-l0U1WPo'
 CHAT_ID = '@Ginesis_v1'
@@ -17,7 +16,7 @@ previous_statuses = None
 
 async def send_telegram_message(message):
     bot = Bot(token=TOKEN)
-    await bot.send_message(chat_id=CHAT_ID, text=message)
+    bot.send_message(chat_id=CHAT_ID, text=message)  # Изменяем эту строку
 
 
 async def send_startup_message():
@@ -53,7 +52,7 @@ async def check_vacancy_page():
     if current_statuses != previous_statuses:
         message = "Изменение статуса вакансий!"
         print(message)
-        await send_telegram_message(message)
+        send_telegram_message(message)  # Изменяем эту строку
         previous_statuses = current_statuses
 
     # Подсчитываем количество вакансий со статусом "Регистрация временно приостановлена"
