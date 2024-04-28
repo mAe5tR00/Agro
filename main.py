@@ -7,6 +7,7 @@ from keep_alive import keep_alive
 keep_alive()
 
 
+
 # Ваш токен бота и ID чата
 TOKEN = '6600994228:AAEKvdJCVZPCBXkP3ylfFW9jHqS-l0U1WPo'
 CHAT_ID = '@Ginesis_v1'
@@ -65,8 +66,13 @@ async def check_vacancy_page():
 asyncio.run(send_startup_message())
 
 # Основной цикл мониторинга
-while True:
-    asyncio.run(check_vacancy_page())
+async def main():
+    while True:
+        await check_vacancy_page()
 
-    # Проверяем каждые 5 минут
-    await asyncio.sleep(300)
+        # Проверяем каждые 5 минут
+        await asyncio.sleep(300)
+
+# Запускаем основной цикл мониторинга
+asyncio.run(main())
+
