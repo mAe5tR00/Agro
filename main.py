@@ -73,5 +73,3 @@ async def main():
 
 # Запускаем основной цикл мониторинга
 asyncio.run(main())
-
-
