@@ -7,7 +7,6 @@ from keep_alive import keep_alive
 keep_alive()
 
 
-
 # Ваш токен бота и ID чата
 TOKEN = '6600994228:AAEKvdJCVZPCBXkP3ylfFW9jHqS-l0U1WPo'
 CHAT_ID = '@Ginesis_v1'
@@ -62,11 +61,10 @@ async def check_vacancy_page():
     print(f"Вакансий с приостановленной регистрацией: {suspended_vacancies_count}")
 
 
-# Уведомление о начале мониторинга
-asyncio.run(send_startup_message())
-
-# Основной цикл мониторинга
+# Основная функция мониторинга
 async def main():
+    await send_startup_message()  # Уведомление о начале мониторинга
+
     while True:
         await check_vacancy_page()
 
@@ -75,4 +73,5 @@ async def main():
 
 # Запускаем основной цикл мониторинга
 asyncio.run(main())
+
 
