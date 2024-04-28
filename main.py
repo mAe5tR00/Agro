@@ -6,6 +6,7 @@ import os
 from keep_alive import keep_alive
 keep_alive()
 
+
 # Ваш токен бота и ID чата
 TOKEN = '6600994228:AAEKvdJCVZPCBXkP3ylfFW9jHqS-l0U1WPo'
 CHAT_ID = '@Ginesis_v1'
@@ -14,15 +15,15 @@ CHAT_ID = '@Ginesis_v1'
 previous_statuses = None
 
 
-def send_telegram_message(message):
+async def send_telegram_message(message):
     bot = Bot(token=TOKEN)
-    asyncio.run(bot.send_message(chat_id=CHAT_ID, text=message))
+    await bot.send_message(chat_id=CHAT_ID, text=message)
 
 
-def send_startup_message():
+async def send_startup_message():
     message = "Мониторинг сайта Agropraktika.eu запущен."
     print(message)
-    send_telegram_message(message)
+    await send_telegram_message(message)
 
 
 def get_vacancy_statuses():
@@ -38,7 +39,7 @@ def get_vacancy_statuses():
     return vacancy_statuses
 
 
-def check_vacancy_page():
+async def check_vacancy_page():
     global previous_statuses
 
     current_statuses = get_vacancy_statuses()
@@ -52,7 +53,7 @@ def check_vacancy_page():
     if current_statuses != previous_statuses:
         message = "Изменение статуса вакансий!"
         print(message)
-        send_telegram_message(message)
+        await send_telegram_message(message)
         previous_statuses = current_statuses
 
     # Подсчитываем количество вакансий со статусом "Регистрация временно приостановлена"
@@ -61,11 +62,11 @@ def check_vacancy_page():
 
 
 # Уведомление о начале мониторинга
-send_startup_message()
+asyncio.run(send_startup_message())
 
 # Основной цикл мониторинга
 while True:
-    check_vacancy_page()
+    asyncio.run(check_vacancy_page())
 
     # Проверяем каждые 5 минут
-    asyncio.run(asyncio.sleep(300))
+    await asyncio.sleep(300)
