@@ -14,10 +14,10 @@ import hashlib
 # ============================================
 
 # ВАШ ТОКЕН БОТА (получите у @BotFather)
-TELEGRAM_BOT_TOKEN = "6046846295:AAFc_8p-xRxuSxEg7-3f_VGKYiKZWIFBS5w"  # Пример: "6046846295:AAFc_8p-xRxuSxEg7-3f_VGKYiKZWIFBS5w"
+TELEGRAM_BOT_TOKEN = ""  # Пример: "60468фыв46295:AAFcфывфRxuSxEg7фвфYiKZWфффыIFBS5w"
 
 # ID вашего чата (куда отправлять уведомления)
-TELEGRAM_CHAT_ID = "-1003526159260"  # Пример: "-1003526159260" или "@Ginesis_v1"
+TELEGRAM_CHAT_ID = ""  # Пример: "-id канала" или "@канал"
 
 # Интервал проверки в секундах (рекомендуется 300 = 5 минут)
 CHECK_INTERVAL = 300
@@ -345,3 +345,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
