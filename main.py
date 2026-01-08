@@ -4,9 +4,10 @@ import logging
 from typing import List, Dict, Optional
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import re
+import threading
 
 # ============================================
 # НАСТРОЙКИ - МЕНЯЙТЕ ЗДЕСЬ!
@@ -47,13 +48,39 @@ class VacancyMonitor:
         self.base_url = "https://agropraktika.eu"
         self.check_interval = CHECK_INTERVAL
         self.telegram_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+        
+        # Статистика для команды /status
+        self.start_time = datetime.now()
+        self.check_count = 0
+        self.last_check_time = None
+        self.last_update_id = 0
+        self.running = True
+        
+    def format_uptime(self) -> str:
+        """Форматирование времени работы"""
+        uptime = datetime.now() - self.start_time
+        days = uptime.days
+        hours, remainder = divmod(uptime.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        parts = []
+        if days > 0:
+            parts.append(f"{days} дн.")
+        if hours > 0:
+            parts.append(f"{hours} ч.")
+        if minutes > 0:
+            parts.append(f"{minutes} мин.")
+        if not parts:
+            parts.append(f"{seconds} сек.")
+            
+        return " ".join(parts)
 
-    def send_telegram_message(self, message: str) -> bool:
+    def send_telegram_message(self, message: str, chat_id: str = None) -> bool:
         """Отправка сообщения через HTTP API (работает на любом хостинге)"""
         try:
             url = f"{self.telegram_api_url}/sendMessage"
             data = {
-                'chat_id': TELEGRAM_CHAT_ID,
+                'chat_id': chat_id or TELEGRAM_CHAT_ID,
                 'text': message,
                 'parse_mode': 'HTML',
                 'disable_web_page_preview': False
@@ -69,6 +96,146 @@ class VacancyMonitor:
         except Exception as e:
             logger.error(f"Ошибка отправки: {e}")
             return False
+
+    def get_updates(self) -> List[Dict]:
+        """Получение новых сообщений от пользователей"""
+        try:
+            url = f"{self.telegram_api_url}/getUpdates"
+            params = {
+                'offset': self.last_update_id + 1,
+                'timeout': 1,
+                'allowed_updates': ['message']
+            }
+            response = requests.get(url, params=params, timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('ok') and data.get('result'):
+                    return data['result']
+            return []
+        except Exception as e:
+            logger.debug(f"Ошибка получения обновлений: {e}")
+            return []
+
+    def handle_status_command(self, chat_id: str):
+        """Обработка команды /status"""
+        total_vacancies = len(self.previous_vacancies)
+        suspended = sum(1 for v in self.previous_vacancies.values() 
+                       if v.get('status') == "Регистрация временно приостановлена")
+        active = total_vacancies - suspended
+        
+        # Время до следующей проверки
+        if self.last_check_time:
+            next_check = self.last_check_time + timedelta(seconds=self.check_interval)
+            time_to_next = next_check - datetime.now()
+            if time_to_next.total_seconds() > 0:
+                next_check_str = f"{int(time_to_next.total_seconds() // 60)} мин. {int(time_to_next.total_seconds() % 60)} сек."
+            else:
+                next_check_str = "скоро..."
+        else:
+            next_check_str = "ожидание..."
+        
+        status_message = f"""
+🤖 <b>Статус бота Agropraktika Monitor</b>
+
+✅ <b>Статус:</b> Работает
+⏰ <b>Время работы:</b> {self.format_uptime()}
+📅 <b>Запущен:</b> {self.start_time.strftime('%H:%M:%S %d.%m.%Y')}
+
+📊 <b>Статистика:</b>
+├ Вакансий отслеживается: <b>{total_vacancies}</b>
+├ 🔴 Приостановлено: <b>{suspended}</b>
+├ 🟢 Активных: <b>{active}</b>
+└ #️⃣ Проверок выполнено: <b>{self.check_count}</b>
+
+⏱ <b>Проверки:</b>
+├ Последняя: {self.last_check_time.strftime('%H:%M:%S') if self.last_check_time else 'ещё не было'}
+├ Следующая через: {next_check_str}
+└ Интервал: {self.check_interval // 60} мин.
+
+🌐 <b>Сайт:</b> agropraktika.eu/vacancies
+"""
+        self.send_telegram_message(status_message.strip(), chat_id)
+        logger.info(f"Отправлен статус в чат {chat_id}")
+
+    def handle_help_command(self, chat_id: str):
+        """Обработка команды /help"""
+        help_message = """
+🤖 <b>Бот мониторинга Agropraktika</b>
+
+<b>Доступные команды:</b>
+/status - Показать статус бота
+/check - Запустить проверку вакансий сейчас
+/help - Показать это сообщение
+
+<b>Как работает бот:</b>
+Бот автоматически проверяет сайт каждые 5 минут и уведомляет, когда регистрация на вакансию открывается.
+
+<b>Уведомления:</b>
+🟢 - Регистрация открылась (важно!)
+📊 - Ежедневная статистика (9:00)
+"""
+        self.send_telegram_message(help_message.strip(), chat_id)
+
+    def handle_check_command(self, chat_id: str):
+        """Обработка команды /check - принудительная проверка"""
+        self.send_telegram_message("🔄 <b>Запускаю проверку вакансий...</b>", chat_id)
+        
+        # Выполняем проверку
+        current_vacancies = self.check_all_pages()
+        
+        if current_vacancies:
+            total = len(current_vacancies)
+            suspended = sum(1 for v in current_vacancies if v['status'] == "Регистрация временно приостановлена")
+            active = total - suspended
+            
+            result_message = f"""
+✅ <b>Проверка завершена!</b>
+
+📋 Найдено вакансий: <b>{total}</b>
+🔴 Приостановлено: <b>{suspended}</b>
+🟢 Активных: <b>{active}</b>
+
+Время: {datetime.now().strftime('%H:%M:%S %d.%m.%Y')}
+"""
+            self.send_telegram_message(result_message.strip(), chat_id)
+        else:
+            self.send_telegram_message("⚠️ Не удалось получить данные с сайта", chat_id)
+
+    def process_commands(self):
+        """Обработка входящих команд в отдельном потоке"""
+        logger.info("Запущен обработчик команд")
+        
+        while self.running:
+            try:
+                updates = self.get_updates()
+                
+                for update in updates:
+                    self.last_update_id = update.get('update_id', self.last_update_id)
+                    
+                    message = update.get('message', {})
+                    text = message.get('text', '')
+                    chat_id = str(message.get('chat', {}).get('id', ''))
+                    
+                    if not text or not chat_id:
+                        continue
+                    
+                    # Обработка команд
+                    if text.startswith('/status'):
+                        logger.info(f"Получена команда /status от {chat_id}")
+                        self.handle_status_command(chat_id)
+                    elif text.startswith('/help') or text.startswith('/start'):
+                        logger.info(f"Получена команда /help от {chat_id}")
+                        self.handle_help_command(chat_id)
+                    elif text.startswith('/check'):
+                        logger.info(f"Получена команда /check от {chat_id}")
+                        self.handle_check_command(chat_id)
+                
+                time.sleep(2)  # Проверяем команды каждые 2 секунды
+                
+            except Exception as e:
+                logger.error(f"Ошибка обработки команд: {e}")
+                time.sleep(5)
 
     def get_vacancies_data(self, page: int = 1) -> List[Dict]:
         """Получение данных о вакансиях с указанной страницы"""
@@ -314,8 +481,8 @@ class VacancyMonitor:
 🟢 <b>ВАЖНО: Регистрация открылась!</b>
 
 🏷 <b>Вакансия:</b> {vacancy['title']}
- <b>Место:</b> {vacancy['location']}
- <b>Начинается:</b> {vacancy['start_date']}
+📍 <b>Место:</b> {vacancy['location']}
+🚀 <b>Начинается:</b> {vacancy['start_date']}
 
 🔗 <a href="{vacancy['link']}">Скорее переходи по ссылке!</a>
 
@@ -357,6 +524,8 @@ class VacancyMonitor:
         """Основная функция проверки обновлений"""
         try:
             logger.info("Начинаю проверку вакансий...")
+            self.last_check_time = datetime.now()
+            self.check_count += 1
 
             # Получаем текущие вакансии
             current_vacancies = self.check_all_pages()
@@ -378,6 +547,11 @@ class VacancyMonitor:
 
     def run(self):
         """Основной цикл работы бота"""
+        # Запускаем обработчик команд в отдельном потоке
+        command_thread = threading.Thread(target=self.process_commands, daemon=True)
+        command_thread.start()
+        logger.info("Обработчик команд запущен в отдельном потоке")
+        
         # Начальное сообщение
         startup_message = f"""
 🚀 <b>Мониторинг Agropraktika запущен!</b>
@@ -385,6 +559,11 @@ class VacancyMonitor:
 📡 Отслеживаю открытие регистрации на вакансии
 ⏱ Интервал проверки: {self.check_interval // 60} минут
 🌐 Сайт: agropraktika.eu/vacancies
+
+<b>Команды:</b>
+/status - Статус бота
+/check - Проверить сейчас
+/help - Помощь
 
 Бот будет уведомлять при открытии регистрации.
 """
@@ -399,6 +578,7 @@ class VacancyMonitor:
                 suspended = sum(1 for v in initial_vacancies if v['status'] == "Регистрация временно приостановлена")
 
                 logger.info(f"Инициализация завершена. Загружено {len(initial_vacancies)} вакансий")
+                self.last_check_time = datetime.now()
 
                 init_stats = f"""
 📋 <b>Начальная загрузка завершена</b>
@@ -418,11 +598,9 @@ class VacancyMonitor:
             self.send_telegram_message(f"⚠️ <b>Ошибка начальной загрузки:</b>\n{str(e)[:200]}")
 
         # Основной цикл
-        check_count = 0
-        while True:
+        while self.running:
             try:
-                check_count += 1
-                logger.info(f"=== Проверка #{check_count} ===")
+                logger.info(f"=== Проверка #{self.check_count + 1} ===")
 
                 self.check_for_updates()
                 logger.info(f"Следующая проверка через {self.check_interval} секунд")
@@ -430,6 +608,7 @@ class VacancyMonitor:
 
             except KeyboardInterrupt:
                 logger.info("Мониторинг остановлен пользователем")
+                self.running = False
                 self.send_telegram_message("🛑 <b>Мониторинг остановлен</b>")
                 break
             except Exception as e:
