@@ -25,8 +25,10 @@ load_dotenv()
 # ============================================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+SECONDARY_CHAT_ID = os.getenv("SECONDARY_CHAT_ID")
 ADMIN_ID = os.getenv("ADMIN_ID")
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 300))
+DELAY_SECONDS = int(os.getenv("DELAY_SECONDS", 180))
 TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", 5))
 
 # Часовой пояс Астана
@@ -124,7 +126,7 @@ class VacancyMonitor:
             next_check_str = "ожидание..."
         
         return f"""
-🤖 <b>Статус бота Agropraktika Monitor</b>
+🤖 <b>Статус бота Momentum</b>
 
 ✅ <b>Статус:</b> Работает
 ⏰ <b>Время работы:</b> {self.format_uptime()}
@@ -295,27 +297,57 @@ class VacancyMonitor:
 
 🕐 Время: {get_astana_time().strftime('%H:%M:%S %d.%m.%Y')} (Астана)
 """
+            # Основной канал - немедленно
             try:
                 await self.bot.send_message(TELEGRAM_CHAT_ID, msg, parse_mode=ParseMode.HTML)
-                logger.info(f"Отправлено уведомление об открытии: {vac['title']}")
+                logger.info(f"Отправлено уведомление в основной канал: {vac['title']}")
             except Exception as e:
-                logger.error(f"Ошибка отправки сообщения: {e}")
+                logger.error(f"Ошибка отправки в основной канал: {e}")
+
+            # Дополнительный канал - с задержкой
+            if SECONDARY_CHAT_ID:
+                asyncio.create_task(self.delayed_notification(SECONDARY_CHAT_ID, msg, vac['title']))
 
         # Обновляем состояние
         self.previous_vacancies = current_dict
         self.save_data()
 
+    async def delayed_notification(self, chat_id: str, message: str, vacancy_title: str):
+        """Отправка уведомления с задержкой"""
+        logger.info(f"Запланировано отложенное уведомление ({DELAY_SECONDS}с) для: {vacancy_title}")
+        await asyncio.sleep(DELAY_SECONDS)
+        try:
+            await self.bot.send_message(chat_id, message, parse_mode=ParseMode.HTML)
+            logger.info(f"Отправлено отложенное уведомление во второй канал: {vacancy_title}")
+        except Exception as e:
+            logger.error(f"Ошибка отправки отложенного уведомления: {e}")
+
     async def check_hourly_report(self):
-        """Отправка ежечасного отчета"""
+        """Отправка ежечасного отчета в оба канала"""
         now = get_astana_time()
         if self.last_hourly_report is None:
             self.last_hourly_report = now
             return
             
         if now - self.last_hourly_report >= timedelta(hours=1):
-            await self.bot.send_message(TELEGRAM_CHAT_ID, self.get_status_message(), parse_mode=ParseMode.HTML)
+            report = self.get_status_message()
+            
+            # Отправка в основной канал
+            try:
+                await self.bot.send_message(TELEGRAM_CHAT_ID, report, parse_mode=ParseMode.HTML)
+                logger.info("Отправлен ежечасный отчет в основной канал")
+            except Exception as e:
+                logger.error(f"Ошибка отправки отчета в основной канал: {e}")
+                
+            # Отправка во второй канал
+            if SECONDARY_CHAT_ID:
+                try:
+                    await self.bot.send_message(SECONDARY_CHAT_ID, report, parse_mode=ParseMode.HTML)
+                    logger.info("Отправлен ежечасный отчет во второй канал")
+                except Exception as e:
+                    logger.error(f"Ошибка отправки отчета во второй канал: {e}")
+                    
             self.last_hourly_report = now
-            logger.info("Отправлен ежечасный отчет")
 
 # ============================================
 # ОБРАБОТЧИКИ КОМАНД
@@ -330,7 +362,7 @@ class IsAdmin(BaseFilter):
 @router.message(Command("start", "help"), IsAdmin())
 async def cmd_help(message: types.Message):
     msg = """
-🤖 <b>Бот мониторинга Agropraktika (aiogram 3)</b>
+🤖 <b>Бот мониторинга Momentum (aiogram 3)</b>
 
 <b>Доступные команды:</b>
 /status - Показать статус бота
