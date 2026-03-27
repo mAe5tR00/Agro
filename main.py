@@ -10,12 +10,13 @@ from typing import List, Dict, Optional
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-from aiogram import Bot, Dispatcher, Router, types
-from aiogram.filters import Command, BaseFilter
+from aiogram import Bot, Dispatcher, Router, types, F
+from aiogram.filters import Command, BaseFilter, ChatMemberUpdatedFilter
 from aiogram.enums import ParseMode
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import LabeledPrice, PreCheckoutQuery, SuccessfulPayment, ChatJoinRequest
 
-from keep_alive import keep_alive
+
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -36,6 +37,12 @@ ASTANA_TZ = timezone(timedelta(hours=TIMEZONE_OFFSET))
 
 # Путь к файлу сохранения
 DATA_FILE = "vacancies.json"
+SUBS_FILE = "subscriptions.json"
+
+# Настройки подписки
+MOMENTUM_PRO_CHANNEL_ID = -1003836921999
+STARS_PRICE = 250
+SUBSCRIPTION_DAYS = 30
 
 # ============================================
 # ЛОГИРОВАНИЕ
@@ -49,6 +56,69 @@ logger = logging.getLogger(__name__)
 def get_astana_time() -> datetime:
     """Получить текущее время в часовом поясе Астаны"""
     return datetime.now(ASTANA_TZ)
+
+# ============================================
+# УПРАВЛЕНИЕ ПОДПИСКАМИ
+# ============================================
+
+class SubscriptionManager:
+    def __init__(self):
+        self.subscriptions: Dict[str, str] = {}
+        self.load_subs()
+
+    def load_subs(self):
+        """Загрузка подписок из файла"""
+        if os.path.exists(SUBS_FILE):
+            try:
+                with open(SUBS_FILE, 'r', encoding='utf-8') as f:
+                    self.subscriptions = json.load(f)
+            except Exception as e:
+                logger.error(f"Ошибка загрузки подписок: {e}")
+                self.subscriptions = {}
+        else:
+            self.subscriptions = {}
+
+    def save_subs(self):
+        """Сохранение подписок в файл"""
+        try:
+            with open(SUBS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.subscriptions, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            logger.error(f"Ошибка сохранения подписок: {e}")
+
+    def add_subscription(self, user_id: int, days: int = SUBSCRIPTION_DAYS):
+        """Добавить или продлить подписку"""
+        user_id_str = str(user_id)
+        now = get_astana_time()
+        
+        if user_id_str in self.subscriptions:
+            current_expiry = datetime.fromisoformat(self.subscriptions[user_id_str])
+            if current_expiry > now:
+                new_expiry = current_expiry + timedelta(days=days)
+            else:
+                new_expiry = now + timedelta(days=days)
+        else:
+            new_expiry = now + timedelta(days=days)
+            
+        self.subscriptions[user_id_str] = new_expiry.isoformat()
+        self.save_subs()
+        return new_expiry
+
+    def is_active(self, user_id: int) -> bool:
+        """Проверить, активна ли подписка"""
+        user_id_str = str(user_id)
+        if user_id_str not in self.subscriptions:
+            return False
+            
+        expiry = datetime.fromisoformat(self.subscriptions[user_id_str])
+        return expiry > get_astana_time()
+
+    def get_expiry(self, user_id: int) -> Optional[datetime]:
+        """Получить дату истечения подписки"""
+        user_id_str = str(user_id)
+        if user_id_str in self.subscriptions:
+            return datetime.fromisoformat(self.subscriptions[user_id_str])
+        return None
 
 # ============================================
 # МОНИТОР ВАКАНСИЙ
@@ -384,6 +454,144 @@ async def cmd_help(message: types.Message):
 """
     await message.answer(msg, parse_mode=ParseMode.HTML)
 
+# Обработчики для обычных пользователей (Momentum Pro)
+
+@router.message(Command("start"))
+async def cmd_start_public(message: types.Message, sub_manager: SubscriptionManager):
+    """Публичная команда старт"""
+    # Если админ, можно показать админ-панель или оставить как есть
+    if str(message.from_user.id) == ADMIN_ID:
+        await cmd_help(message)
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🚀 Momentum Pro", callback_data="buy_momentum_pro")
+    
+    status_text = ""
+    if sub_manager.is_active(message.from_user.id):
+        expiry = sub_manager.get_expiry(message.from_user.id)
+        status_text = f"\n\n✅ <b>Ваша подписка активна до:</b> {expiry.strftime('%d.%m.%Y %H:%M')}"
+
+    msg = f"""
+👋 Приветствую в боте <b>Momentum</b>!
+
+Здесь вы можете приобрести доступ в закрытый канал <b>Momentum Pro</b>.
+{status_text}
+Нажмите кнопку ниже, чтобы узнать подробности.
+"""
+    await message.answer(msg, parse_mode=ParseMode.HTML, reply_markup=kb.as_markup())
+
+@router.callback_query(F.data == "buy_momentum_pro")
+async def process_momentum_pro(callback: types.CallbackQuery):
+    """Показ пользовательского соглашения"""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💳 Купить доступ (250 ⭐)", callback_data="pay_stars")
+    kb.button(text="⬅️ Назад", callback_data="back_to_start")
+    kb.adjust(1)
+
+    agreement = """
+📜 <b>Пользовательское соглашение (Momentum Pro)</b>
+
+Покупая доступ, вы подтверждаете, что:
+1. Оплата производится на добровольной основе.
+2. Доступ предоставляется на 30 дней.
+3. Вы ознакомлены с правилами канала.
+4. Возврат средств за цифровые товары не предусмотрен политикой Telegram.
+
+Стоимость доступа: <b>250 Telegram Stars</b>
+Срок действия: <b>30 дней</b>
+"""
+    await callback.message.edit_text(agreement, parse_mode=ParseMode.HTML, reply_markup=kb.as_markup())
+
+@router.callback_query(F.data == "back_to_start")
+async def process_back_to_start(callback: types.CallbackQuery, sub_manager: SubscriptionManager):
+    """Возврат в главное меню"""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🚀 Momentum Pro", callback_data="buy_momentum_pro")
+    
+    status_text = ""
+    if sub_manager.is_active(callback.from_user.id):
+        expiry = sub_manager.get_expiry(callback.from_user.id)
+        status_text = f"\n\n✅ <b>Ваша подписка активна до:</b> {expiry.strftime('%d.%m.%Y %H:%M')}"
+
+    msg = f"""
+👋 Приветствую в боте <b>Momentum</b>!
+
+Здесь вы можете приобрести доступ в закрытый канал <b>Momentum Pro</b>.
+{status_text}
+Нажмите кнопку ниже, чтобы узнать подробности.
+"""
+    await callback.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb.as_markup())
+
+@router.callback_query(F.data == "pay_stars")
+async def send_payment_invoice(callback: types.CallbackQuery, bot: Bot):
+    """Отправка счета на оплату"""
+    prices = [LabeledPrice(label="Momentum Pro (30 дней)", amount=STARS_PRICE)]
+    
+    await bot.send_invoice(
+        chat_id=callback.message.chat.id,
+        title="Доступ в Momentum Pro",
+        description="Подписка на закрытый канал на 30 дней",
+        payload="momentum_pro_30_days",
+        currency="XTR", # Код для Telegram Stars
+        prices=prices,
+        provider_token="" # Пусто для Telegram Stars
+    )
+    await callback.answer()
+
+@router.pre_checkout_query()
+async def process_pre_checkout_query(pre_checkout_query: PreCheckoutQuery):
+    """Подтверждение перед оплатой"""
+    await pre_checkout_query.answer(ok=True)
+
+@router.message(F.successful_payment)
+async def process_successful_payment(message: types.Message, sub_manager: SubscriptionManager, bot: Bot):
+    """Обработка успешной оплаты"""
+    if message.successful_payment.invoice_payload == "momentum_pro_30_days":
+        expiry = sub_manager.add_subscription(message.from_user.id)
+        
+        kb = InlineKeyboardBuilder()
+        # Ссылка на канал (нужно создать invite link если его нет, но здесь предполагается что пользователь подаст заявку)
+        # В aiogram 3.x для получения ссылки на закрытый канал можно использовать bot.create_chat_invite_link
+        try:
+            invite = await bot.create_chat_invite_link(
+                chat_id=MOMENTUM_PRO_CHANNEL_ID,
+                creates_join_request=True # Обязательно, чтобы бот видел заявку
+            )
+            kb.button(text="➡️ Подать заявку в канал", url=invite.invite_link)
+        except Exception as e:
+            logger.error(f"Ошибка создания ссылки: {e}")
+            kb.button(text="➡️ Подать заявку", url="https://t.me/c/1003836921999/1") # Заглушка
+
+        msg = f"""
+🎉 <b>Оплата прошла успешно!</b>
+
+Ваша подписка активирована до: <b>{expiry.strftime('%d.%m.%Y %H:%M')}</b>.
+Теперь вы можете подать заявку на вступление в канал. Бот одобрит её автоматически.
+"""
+        await message.answer(msg, parse_mode=ParseMode.HTML, reply_markup=kb.as_markup())
+
+@router.chat_join_request(F.chat.id == MOMENTUM_PRO_CHANNEL_ID)
+async def handle_join_request(update: ChatJoinRequest, sub_manager: SubscriptionManager):
+    """Автоматическое одобрение заявок"""
+    user_id = update.from_user.id
+    if sub_manager.is_active(user_id):
+        try:
+            await update.approve()
+            logger.info(f"Одобрена заявка пользователя {user_id} в Momentum Pro")
+            
+            # Можно отправить приветственное сообщение в ЛС
+            await update.bot.send_message(
+                user_id, 
+                "✅ Ваша заявка в <b>Momentum Pro</b> одобрена! Добро пожаловать.",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Ошибка одобрения заявки: {e}")
+    else:
+        # Если подписки нет, можно не одобрять или отклонить (или просто проигнорировать)
+        logger.warning(f"Пользователь {user_id} подал заявку без активной подписки")
+
 @router.message(Command("status"), IsAdmin())
 async def cmd_status(message: types.Message, monitor: VacancyMonitor):
     await message.answer(monitor.get_status_message(), parse_mode=ParseMode.HTML)
@@ -420,15 +628,16 @@ async def main():
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     dp = Dispatcher()
     
-    # Создаем монитор и передаем его в диспетчер как зависимость
+    # Создаем монитор и менеджер подписок
     monitor = VacancyMonitor(bot)
+    sub_manager = SubscriptionManager()
+    
     dp["monitor"] = monitor
+    dp["sub_manager"] = sub_manager
     
     dp.include_router(router)
     
-    # Запускаем Flask в отдельном потоке (если нужно для Replit/KeepAlive)
-    keep_alive()
-    
+
     logger.info("Бот запущен!")
     
     # Запуск монитора и бота одновременно
