@@ -1,5 +1,5 @@
-beautifulsoup4
-aiohttp
 aiogram
+aiohttp
+beautifulsoup4
 python-dotenv
 Flask
