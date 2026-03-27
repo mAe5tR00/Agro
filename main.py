@@ -362,14 +362,14 @@ class IsAdmin(BaseFilter):
 @router.message(Command("start", "help"), IsAdmin())
 async def cmd_help(message: types.Message):
     msg = """
-🤖 <b>Бот мониторинга Momentum (aiogram 3)</b>
+🤖 <b>Бот мониторинга Momentum</b>
 
 <b>Доступные команды:</b>
 /status - Показать статус бота
 /check - Запустить проверку вакансий сейчас
 /help - Показать это сообщение
 
-Бот автоматически проверяет сайт каждые 5 минут и уведомляет об открытии регистрации.
+Бот автоматически проверяет сайт каждые 2 минуты и уведомляет об открытии регистрации.
 """
     await message.answer(msg, parse_mode=ParseMode.HTML)
 
