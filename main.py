@@ -12,9 +12,9 @@ from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, Router, types, F
 from aiogram.filters import Command, BaseFilter, ChatMemberUpdatedFilter
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatMemberStatus
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import LabeledPrice, PreCheckoutQuery, SuccessfulPayment, ChatJoinRequest
+from aiogram.types import LabeledPrice, PreCheckoutQuery, SuccessfulPayment, ChatJoinRequest, ChatMemberUpdated
 
 
 
@@ -404,30 +404,23 @@ class VacancyMonitor:
             logger.error(f"Ошибка отправки отложенного уведомления: {e}")
 
     async def check_hourly_report(self):
-        """Отправка ежечасного отчета в оба канала"""
+        """Отправка ежечасного отчета только во второй канал (в Momentum Pro - только уведомления о вакансиях)"""
         now = get_astana_time()
         if self.last_hourly_report is None:
             self.last_hourly_report = now
             return
-            
+
         if now - self.last_hourly_report >= timedelta(hours=1):
             report = self.get_status_message()
-            
-            # Отправка в основной канал
-            try:
-                await self.bot.send_message(TELEGRAM_CHAT_ID, report, parse_mode=ParseMode.HTML)
-                logger.info("Отправлен ежечасный отчет в основной канал")
-            except Exception as e:
-                logger.error(f"Ошибка отправки отчета в основной канал: {e}")
-                
-            # Отправка во второй канал
+
+            # Отправка только во второй канал (в Momentum Pro отчеты не отправляем)
             if SECONDARY_CHAT_ID:
                 try:
                     await self.bot.send_message(SECONDARY_CHAT_ID, report, parse_mode=ParseMode.HTML)
                     logger.info("Отправлен ежечасный отчет во второй канал")
                 except Exception as e:
                     logger.error(f"Ошибка отправки отчета во второй канал: {e}")
-                    
+
             self.last_hourly_report = now
 
 # ============================================
@@ -579,18 +572,55 @@ async def handle_join_request(update: ChatJoinRequest, sub_manager: Subscription
         try:
             await update.approve()
             logger.info(f"Одобрена заявка пользователя {user_id} в Momentum Pro")
-            
+
             # Можно отправить приветственное сообщение в ЛС
             await update.bot.send_message(
-                user_id, 
+                user_id,
                 "✅ Ваша заявка в <b>Momentum Pro</b> одобрена! Добро пожаловать.",
                 parse_mode=ParseMode.HTML
             )
         except Exception as e:
             logger.error(f"Ошибка одобрения заявки: {e}")
     else:
-        # Если подписки нет, можно не одобрять или отклонить (или просто проигнорировать)
-        logger.warning(f"Пользователь {user_id} подал заявку без активной подписки")
+        # Если подписки нет — отклоняем заявку
+        try:
+            await update.decline()
+            logger.warning(f"Отклонена заявка пользователя {user_id} (нет активной подписки)")
+            
+            # Уведомляем пользователя
+            await update.bot.send_message(
+                user_id,
+                "❌ Ваша заявка отклонена.\n\n"
+                "Возможно, ваша подписка истекла. Приобретите подписку заново через бота.",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при отклонении заявки {user_id}: {e}")
+
+@router.my_chat_member(F.chat.id.in_([TELEGRAM_CHAT_ID, SECONDARY_CHAT_ID]))
+async def handle_chat_member_update(event: ChatMemberUpdated, bot: Bot):
+    """Удаление системных сообщений о вступлении/выходе пользователей"""
+    try:
+        chat_id = event.chat.id
+        old_status = event.old_chat_member.status
+        new_status = event.new_chat_member.status
+        
+        # Удаляем системные сообщения о вступлении, выходе, приглашении
+        if old_status == ChatMemberStatus.LEFT and new_status == ChatMemberStatus.MEMBER:
+            # Пользователь вступил
+            await bot.delete_message(chat_id, event.message.message_id)
+            logger.info(f"Удалено системное сообщение о вступлении в чате {chat_id}")
+        elif old_status == ChatMemberStatus.MEMBER and new_status == ChatMemberStatus.LEFT:
+            # Пользователь вышел
+            await bot.delete_message(chat_id, event.message.message_id)
+            logger.info(f"Удалено системное сообщение о выходе из чата {chat_id}")
+        elif old_status == ChatMemberStatus.RESTRICTED and new_status == ChatMemberStatus.MEMBER:
+            # Пользователь был разблокирован/возвращен
+            await bot.delete_message(chat_id, event.message.message_id)
+            logger.info(f"Удалено системное сообщение о возвращении в чат {chat_id}")
+    except Exception as e:
+        # Игнорируем ошибки (например, если сообщение уже удалено или нет прав)
+        logger.debug(f"Не удалось удалить системное сообщение: {e}")
 
 @router.message(Command("status"), IsAdmin())
 async def cmd_status(message: types.Message, monitor: VacancyMonitor):
