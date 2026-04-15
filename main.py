@@ -1,4 +1,6 @@
-﻿import os
+﻿# -*- coding: utf-8 -*-
+import os
+import sys
 import asyncio
 import logging
 import hashlib
@@ -11,6 +13,14 @@ from typing import List, Dict, Optional, Tuple, Set, Any
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+
+# Force UTF-8 encoding for stdout/stderr on Windows
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    # Set environment variable for UTF-8 encoding
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 
 from aiogram import Bot, Dispatcher, Router, types, F
 from aiogram.filters import Command, BaseFilter
@@ -676,16 +686,14 @@ class IsAdmin(BaseFilter):
 
 @router.message(Command("start", "help"), IsAdmin())
 async def cmd_help(message: types.Message):
-    msg = """
-🤖 <b>Бот мониторинга Momentum</b>
-
-<b>Доступные команды:</b>
-/status - Показать статус бота
-/check - Запустить проверку вакансий сейчас
-/help - Показать это сообщение
-
-Бот автоматически проверяет сайт каждые 2 минуты и уведомляет об открытии регистрации.
-"""
+    msg = (
+        "🤖 <b>Бот мониторинга Momentum</b>\n\n"
+        "<b>Доступные команды:</b>\n"
+        "/status - Показать статус бота\n"
+        "/check - Запустить проверку вакансий сейчас\n"
+        "/help - Показать это сообщение\n\n"
+        "Бот автоматически проверяет сайт каждые 2 минуты и уведомляет об открытии регистрации."
+    )
     await message.answer(msg, parse_mode=ParseMode.HTML)
 
 # Обработчики для обычных пользователей (Momentum Pro)
