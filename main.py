@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import os
 import sys
 import asyncio
@@ -59,7 +59,7 @@ SUBS_FILE = "subscriptions.json"
 
 # Настройки подписки
 MOMENTUM_PRO_CHANNEL_ID = -1003836921999
-STARS_PRICE = 250
+STARS_PRICE = 350
 SUBSCRIPTION_DAYS = 30
 
 # ============================================
@@ -727,7 +727,7 @@ async def cmd_start_public(message: types.Message, sub_manager: SubscriptionMana
 async def process_momentum_pro(callback: types.CallbackQuery):
     """Показ пользовательского соглашения"""
     kb = InlineKeyboardBuilder()
-    kb.button(text="💳 Купить доступ (250 ⭐)", callback_data="pay_stars")
+    kb.button(text="💳 Купить доступ (350 ⭐)", callback_data="pay_stars")
     kb.button(text="⬅️ Назад", callback_data="back_to_start")
     kb.adjust(1)
 
@@ -740,7 +740,7 @@ async def process_momentum_pro(callback: types.CallbackQuery):
 3. Вы ознакомлены с правилами канала.
 4. Возврат средств за цифровые товары не предусмотрен политикой Telegram.
 
-Стоимость доступа: <b>250 Telegram Stars</b>
+Стоимость доступа: <b>350 Telegram Stars</b>
 Срок действия: <b>30 дней</b>
 """
     await callback.message.edit_text(agreement, parse_mode=ParseMode.HTML, reply_markup=kb.as_markup())
