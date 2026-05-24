@@ -28,6 +28,9 @@ from aiogram.enums import ParseMode, ChatMemberStatus
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import LabeledPrice, PreCheckoutQuery, ChatJoinRequest, ChatMemberUpdated
 
+from auth_manager import AuthManager
+from auth_api import start_auth_api
+
 
 
 # Загрузка переменных окружения
@@ -61,6 +64,10 @@ SUBS_FILE = "subscriptions.json"
 MOMENTUM_PRO_CHANNEL_ID = -1003836921999
 STARS_PRICE = 350
 SUBSCRIPTION_DAYS = 30
+
+AUTH_API_HOST = os.getenv("AUTH_API_HOST", "0.0.0.0")
+AUTH_API_PORT = int(os.getenv("AUTH_API_PORT", "8080"))
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "")
 
 # ============================================
 # ЛОГИРОВАНИЕ
@@ -699,9 +706,41 @@ async def cmd_help(message: types.Message):
 # Обработчики для обычных пользователей (Momentum Pro)
 
 @router.message(Command("start"))
-async def cmd_start_public(message: types.Message, sub_manager: SubscriptionManager):
-    """Публичная команда старт"""
-    # Если админ, можно показать админ-панель или оставить как есть
+async def cmd_start_public(
+    message: types.Message,
+    sub_manager: SubscriptionManager,
+    auth_manager: AuthManager,
+):
+    """Публичная команда /start + вход в приложение через login_<session>."""
+    user = message.from_user
+    auth_manager.register_telegram_user(
+        user.id,
+        user.username,
+        user.first_name,
+        user.last_name,
+    )
+
+    payload = ""
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) > 1:
+        payload = parts[1].strip()
+
+    if payload.startswith("login_"):
+        session_id = payload[6:]
+        try:
+            await auth_manager.bind_session_to_user(session_id, user.id)
+            await message.answer(
+                "✅ <b>Код отправлен в этот чат.</b>\n\n"
+                "Вернитесь в приложение <b>Momentum</b> и введите 6-значный код.",
+                parse_mode=ParseMode.HTML,
+            )
+        except ValueError:
+            await message.answer(
+                "⚠️ Сессия входа истекла. Откройте приложение и запросите новый код.",
+                parse_mode=ParseMode.HTML,
+            )
+        return
+
     if str(message.from_user.id) == ADMIN_ID:
         await cmd_help(message)
         return
@@ -929,19 +968,23 @@ async def main():
     # Создаем монитор и менеджер подписок
     monitor = VacancyMonitor(bot)
     sub_manager = SubscriptionManager()
-    
+    auth_manager = AuthManager(bot)
+
+    me = await bot.get_me()
+    bot_username = TELEGRAM_BOT_USERNAME or (me.username if me else "MomentumBot")
+
     dp["monitor"] = monitor
     dp["sub_manager"] = sub_manager
-    
-    dp.include_router(router)
-    
+    dp["auth_manager"] = auth_manager
 
-    logger.info("Бот запущен!")
-    
-    # Запуск монитора и бота одновременно
+    dp.include_router(router)
+
+    await start_auth_api(auth_manager, bot_username, AUTH_API_HOST, AUTH_API_PORT)
+    logger.info("Бот запущен! Auth API: http://%s:%s", AUTH_API_HOST, AUTH_API_PORT)
+
     await asyncio.gather(
         dp.start_polling(bot),
-        monitor.monitor_loop()
+        monitor.monitor_loop(),
     )
 
 if __name__ == "__main__":
